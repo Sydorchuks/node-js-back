@@ -117,16 +117,16 @@ app.post('/auth/login', async(req,res) => {
             }
         });
 
+
         res.cookie('accessToken', accessToken, {
             httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
+            secure: false, // true ONLY on HTTPS prod
             sameSite: 'lax',
             maxAge: 60 * 60 * 1000, // 1 hour
           });
-          
           res.cookie('refreshToken', refreshToken, {
             httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
+            secure: false, // true ONLY on HTTPS prod
             sameSite: 'lax',
             maxAge: 7 * 24 * 60 * 60 * 1000, // 1 week
           });
@@ -196,6 +196,8 @@ app.post('/auth/refresh-token', async (req, res) => {
         try {
             decodedRefreshToken = jwt.verify(refreshToken, process.env.REFRESH_TOKEN_SECRET);
         } catch (error) {
+            // Clear invalid refresh token cookie
+            res.clearCookie('refreshToken');
             return res.status(401).json({ message: 'Invalid or expired refresh token' });
         }
 
@@ -204,66 +206,39 @@ app.post('/auth/refresh-token', async (req, res) => {
             where: {
                 userId: decodedRefreshToken.userId,
                 token: refreshToken,
-                expiresAt: { gt: new Date() } // Check expiry
+                expiresAt: { gt: new Date() }
             }
         });
 
         if (!storedToken) {
+            res.clearCookie('refreshToken');
             return res.status(401).json({ message: 'Refresh token invalid or expired' });
         }
-
-        // Remove old refresh token
-        await prisma.refreshToken.delete({
-            where: { id: storedToken.id }
-        });
 
         // Generate new tokens
         const accessToken = jwt.sign(
             { userId: decodedRefreshToken.userId },
             process.env.JWT_SECRET,
-            { subject: 'accessApi', expiresIn: '1h' }
+            { expiresIn: '1h' }
         );
 
-        const newRefreshToken = jwt.sign(
-            { userId: decodedRefreshToken.userId },
-            process.env.REFRESH_TOKEN_SECRET,
-            { subject: 'refreshToken', expiresIn: '1w' }
-        );
-
-        // Save new refresh token
-        await prisma.refreshToken.create({
-            data: {
-                token: newRefreshToken,
-                userId: decodedRefreshToken.userId,
-                expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 1 week expiry
-            }
-        });
-
-        console.log("🍪 Cookies:", req.cookies)
-
-        res.cookie('refreshToken', newRefreshToken, {
+        // Set new access token cookie
+        res.cookie('accessToken', accessToken, {
             httpOnly: true,
-            secure: process.env.NODE_ENV === 'production', // Use secure cookies in production
-            sameSite: 'Lax', // Adjust based on your needs
-            path: '/', // Adjust path if needed
+            secure: false, 
+            sameSite: 'lax',
+            maxAge: 60 * 60 * 1000, // 1 hour
         });
 
-
-        return res.status(200).json({
-            accessToken,
-            refreshToken: newRefreshToken
+        return res.status(200).json({ 
+            success: true,
+            accessToken 
         });
     } catch (error) {
-        if(error instanceof jwt.TokenExpiredError){
-            return res.status(401).json({message: 'Access Token Expired', code: 'AccessTokenExpired'})
-        }else if (error instanceof jwt.JsonWebTokenError){
-            return res.status(401).json({message: 'Access Token Invalid', code: 'AccessTokenInvalid'})
-        }else{
-            return res.status(500).json({ message: error.message });
-        }
+        console.error('Refresh token error:', error);
+        return res.status(500).json({ message: 'Internal server error' });
     }
 });
-
 
 /** ___________________________________________________________________________________________________________________
  *                                                        ADMIN
