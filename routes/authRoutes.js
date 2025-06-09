@@ -6,6 +6,8 @@ const config = require('../config')
 const cookieParser = require('cookie-parser');
 const prisma = new PrismaClient();
 const app = express.Router();
+const {authenticator} = require('otplib')
+const qrcode = require('qrcode')
 
 
 /** ___________________________________________________________________________________________________________________
@@ -54,7 +56,9 @@ app.post('/auth/register', async (req, res) => {
                 name,
                 email,
                 password: hashedPassword,
-                role: role ?? 'USER'
+                role: role ?? 'USER',
+                '2faEnable': false,
+                '2faSecret': null
             },
         });
         return res.status(201).json({ message: 'User registered successfully', id: newUser.id });
@@ -138,6 +142,58 @@ app.post('/auth/login', async(req,res) => {
     } catch (error) {
         console.error('Login error:', error);
         return res.status(500).json({ message: 'Internal Server Error' });
+    }
+})
+
+/** ___________________________________________________________________________________________________________________
+ *                                                      2FA
+*/
+
+app.get('/auth/2fa/generate', ensureAuthenticated, async(req, res) => {
+    try{
+        const user = await users.findOne({_id: req.user.id})
+
+        const secret = authenticator.generateSecret()
+
+        const uri = authenticator.keyuri(user.email, 'admin', secret)
+
+        await users.update({_id: req.user.id}, {$set: {'2faSecret': secret}})
+        await users.compactDatafile()
+
+        const qrCode = await qrcode.toBuffer(uri, {type: 'image/png', margin: 1})
+
+        res.setHeader('Content-Disposition', 'attachment; filename=qrcode.png')
+
+        return res.status(200).type('image/png').send(qrCode)
+
+    }catch(error){
+        return res.status(500).json({message: error.message})
+    }
+})
+
+app.post('/api/auth/2fa/validate', ensureAuthenticated, async (req,res) => {
+    try{
+        const {totp} = req.body
+
+        if(!totp){
+            return res.status(422).json({message: 'TOTP is required'})
+        }
+
+        const user = await users.findOne({_id: req.user.id})
+
+        const verified = authenticator.check(totp, user['2faSecret'])
+
+        if(!verified){
+            return res.status(400).json({message: 'TOTP is not correct or expired'})
+        }
+
+        await users.update({_id: req.user.id}, {$set: {'2faEnable': true}} )
+        await users.compactDatafile()
+
+        return res.status(200).json({message: 'TOTP validated successfully'})
+        
+    }catch(error){
+        return res.status(500).json({message: error.message})
     }
 })
 

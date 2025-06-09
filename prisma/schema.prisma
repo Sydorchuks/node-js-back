@@ -19,20 +19,25 @@ enum UserRole{
 }
 
 model User {
-  id                 String    @id @default(cuid())
-  name               String?
-  email              String?   @unique
-  emailVerified      DateTime? @map("email_verified")
-  image              String?
-  password           String?
-  role               UserRole @default(USER)
-  accounts           Account[]
-  isTwoFactorEnabled Boolean @default(false)
+  id                   String                   @id @default(cuid())
+  name                 String?
+  email                String?                  @unique
+  emailVerified        DateTime?                @map("email_verified")
+  image                String?
+  password             String?
+  role                 UserRole                 @default(USER)
+  accounts             Account[]
+  isTwoFactorEnabled   Boolean                  @default(false)
+  forceTwoFactor       Boolean                  @default(false)  // force 2FA on next login
+  failedLoginCount     Int                      @default(0)      // track failed logins
   twoFactorConfirmation TwoFactorConfirmation[]
-  refreshToken RefreshToken[]
-  invalidToken InvalidToken[]
+  refreshToken         RefreshToken[]
+  invalidToken         InvalidToken[]
   @@map("users")
 }
+
+
+
 
 
 model RefreshToken {
@@ -100,11 +105,12 @@ model TwoFactorToken{
   @@unique([email,token])
 }
 
-model TwoFactorConfirmation{
-  id String @id @default(cuid())
-  
-  userId String
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([userId])
+model TwoFactorConfirmation {
+  id          String   @id @default(cuid())
+  user        User     @relation(fields: [userId], references: [id])
+  userId      String
+  code        String   // OTP code sent via email
+  expiresAt   DateTime // expiry timestamp
+  createdAt   DateTime @default(now())
+  used        Boolean  @default(false)
 }
